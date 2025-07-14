@@ -39,6 +39,7 @@
 #define XREMOTE_APP_FOLDER ANY_PATH("infrared")
 #define XREMOTE_APP_SETTINGS APP_DATA_PATH("xremote.cfg")
 #define XREMOTE_ALT_NAMES APP_DATA_PATH("alt_names.txt")
+#define XREMOTE_APP_DEFAULT_FILE APP_DATA_PATH("AppleTV.ir")
 
 #define xremote_app_assert_void(cond) \
     if(!cond) return
@@ -54,6 +55,7 @@ uint32_t xremote_app_get_exit_index(XRemoteAppExit exit_behavior);
 ViewOrientation xremote_app_get_orientation(uint8_t orientation_index);
 const char* xremote_app_get_orientation_str(ViewOrientation view_orientation);
 const char* xremote_app_get_alt_names_str(uint8_t alt_names_index);
+const char* xremote_app_get_ir_files_str(uint8_t ir_files_index);
 uint32_t xremote_app_get_orientation_index(ViewOrientation view_orientation);
 
 //////////////////////////////////////////////////////////////////////////////
@@ -61,11 +63,26 @@ uint32_t xremote_app_get_orientation_index(ViewOrientation view_orientation);
 //////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
+    char** file_names;
+    uint32_t count;
+    uint32_t capacity;
+} XRemoteIRFileList;
+
+typedef struct {
     ViewOrientation orientation;
     XRemoteAppExit exit_behavior;
     uint32_t repeat_count;
     uint32_t alt_names;
+    FuriString* default_file;
+    XRemoteIRFileList* ir_files;  // Add this line
 } XRemoteAppSettings;
+
+// Add these function declarations:
+XRemoteIRFileList* xremote_app_ir_files_alloc();
+void xremote_app_ir_files_free(XRemoteIRFileList* list);
+bool xremote_app_ir_files_scan(XRemoteIRFileList* list);
+const char* xremote_app_get_ir_files_str_dynamic(XRemoteIRFileList* list, uint8_t index);
+uint32_t xremote_app_get_ir_files_count(XRemoteIRFileList* list);
 
 XRemoteAppSettings* xremote_app_settings_alloc();
 void xremote_app_settings_free(XRemoteAppSettings* settings);

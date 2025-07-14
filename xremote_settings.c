@@ -25,6 +25,9 @@ typedef struct {
 #define XREMOTE_ALT_NAMES_TEXT "Alt Names"
 #define XREMOTE_ALT_NAMES_MAX 2
 
+#define XREMOTE_DEFAULT_FILE_TEXT "Default File"
+#define XREMOTE_DEFAULT_FILE_MAX 10
+
 static uint32_t xremote_settings_view_exit_callback(void* context) {
     UNUSED(context);
     return XRemoteViewSubmenu;
@@ -75,6 +78,25 @@ static void infrared_settings_alt_names_changed(VariableItem* item) {
 
     if(settings->alt_names) xremote_app_alt_names_check_and_init();
     variable_item_set_current_value_text(item, alt_names_str);
+    xremote_app_settings_store(settings);
+}
+
+// MODIFY the infrared_settings_default_file_changed function:
+static void infrared_settings_default_file_changed(VariableItem* item) {
+    XRemoteSettingsContext* ctx = variable_item_get_context(item);
+    XRemoteAppSettings* settings = ctx->app_ctx->app_settings;
+
+    // Get new file name from item using dynamic list
+    uint32_t selected_index = variable_item_get_current_value_index(item);
+    const char* ir_file_name = xremote_app_get_ir_files_str_dynamic(settings->ir_files, selected_index);
+
+    // Update settings->default_file (replace the string)
+    furi_string_set_str(settings->default_file, ir_file_name);
+
+    // Update UI text
+    variable_item_set_current_value_text(item, ir_file_name);
+
+    // Store updated settings
     xremote_app_settings_store(settings);
 }
 
@@ -147,6 +169,32 @@ static XRemoteSettingsContext* xremote_settings_context_alloc(XRemoteAppContext*
     /* Set exit behavior item index and string */
     variable_item_set_current_value_index(item, settings->alt_names);
     variable_item_set_current_value_text(item, xremote_app_get_alt_names_str(settings->alt_names));
+
+    /* Add default file selection to variable item list */
+    uint32_t ir_files_count = xremote_app_get_ir_files_count(settings->ir_files);
+    if(ir_files_count > 0) {
+        item = variable_item_list_add(
+            context->item_list,
+            XREMOTE_DEFAULT_FILE_TEXT,
+            ir_files_count,  // Use dynamic count instead of XREMOTE_DEFAULT_FILE_MAX
+            infrared_settings_default_file_changed,
+            context);
+
+        /* Find the index that corresponds to current default filename */
+        uint32_t default_file_index = 0;
+        const char* current_default = furi_string_get_cstr(settings->default_file);
+        
+        for(uint32_t i = 0; i < ir_files_count; i++) {
+            if(strcmp(current_default, xremote_app_get_ir_files_str_dynamic(settings->ir_files, i)) == 0) {
+                default_file_index = i;
+                break;
+            }
+        }
+
+        /* Set default file item index and string */
+        variable_item_set_current_value_index(item, default_file_index);
+        variable_item_set_current_value_text(item, current_default);
+    }
 
     return context;
 }

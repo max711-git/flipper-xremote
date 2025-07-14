@@ -47,6 +47,111 @@ const char* xremote_app_get_alt_names_str(uint8_t alt_names_index) {
     return alt_names_index ? "On" : "Off";
 }
 
+const char* xremote_app_get_ir_files_str(uint8_t ir_files_index) {
+    switch(ir_files_index) {
+        case 0: return "AppleTV.ir";
+        case 1: return "Samsung.ir";
+        case 2: return "LG.ir";
+        case 3: return "Sony.ir";
+        default: return "Unknown";
+    }
+}
+
+XRemoteIRFileList* xremote_app_ir_files_alloc() {
+    XRemoteIRFileList* list = malloc(sizeof(XRemoteIRFileList));
+    list->file_names = NULL;
+    list->count = 0;
+    list->capacity = 0;
+    return list;
+}
+
+static bool xremote_app_ir_files_add(XRemoteIRFileList* list, const char* filename) {
+    if(!list || !filename) return false;
+    
+    // Expand capacity if needed
+    if(list->count >= list->capacity) {
+        uint32_t new_capacity = list->capacity == 0 ? 8 : list->capacity * 2;
+        char** new_array = realloc(list->file_names, new_capacity * sizeof(char*));
+        if(!new_array) return false;
+        
+        list->file_names = new_array;
+        list->capacity = new_capacity;
+    }
+    
+    // Allocate and copy filename
+    list->file_names[list->count] = malloc(strlen(filename) + 1);
+    if(!list->file_names[list->count]) return false;
+    
+    strcpy(list->file_names[list->count], filename);
+    list->count++;
+    return true;
+}
+
+bool xremote_app_ir_files_scan(XRemoteIRFileList* list) {
+    if(!list) return false;
+    
+    // Clear existing list
+    if(list->file_names) {
+        for(uint32_t i = 0; i < list->count; i++) {
+            if(list->file_names[i]) {
+                free(list->file_names[i]);
+            }
+        }
+        list->count = 0;
+    }
+    
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* directory = storage_file_alloc(storage);
+    FileInfo file_info;
+    char filename[256]; // Buffer for filename
+    
+    bool success = false;
+    
+    do {
+        // Open the infrared directory
+        if(!storage_dir_open(directory, XREMOTE_APP_FOLDER)) break;
+        
+        // Read directory entries
+        while(storage_dir_read(directory, &file_info, filename, sizeof(filename))) {
+            if(file_info.flags & FSF_DIRECTORY) continue;
+            
+            size_t name_len = strlen(filename);
+            
+            // Check if file has .ir extension
+            if(name_len > 3 && strcmp(filename + name_len - 3, ".ir") == 0) {
+                if(!xremote_app_ir_files_add(list, filename)) {
+                    FURI_LOG_E(XREMOTE_APP_TAG, "Failed to add IR file: %s", filename);
+                    break;
+                }
+            }
+        }
+        
+        success = true;
+    } while(false);
+    
+    storage_file_free(directory);
+    furi_record_close(RECORD_STORAGE);
+    
+    // If no files found, add default files as fallback
+    if(success && list->count == 0) {
+        xremote_app_ir_files_add(list, "AppleTV.ir");
+        xremote_app_ir_files_add(list, "Samsung.ir");
+        xremote_app_ir_files_add(list, "LG.ir");
+        xremote_app_ir_files_add(list, "Sony.ir");
+    }
+    
+    return success;
+}
+
+uint32_t xremote_app_get_ir_files_count(XRemoteIRFileList* list) {
+    return list ? list->count : 0;
+}
+
+const char* xremote_app_get_ir_files_str_dynamic(XRemoteIRFileList* list, uint8_t index) {
+    if(!list || index >= list->count) return "Unknown";
+    return list->file_names[index];
+}
+
 const char* xremote_app_get_orientation_str(ViewOrientation view_orientation) {
     return view_orientation == ViewOrientationHorizontal ? "Horizontal" : "Vertical";
 }
@@ -254,11 +359,28 @@ XRemoteAppSettings* xremote_app_settings_alloc() {
     settings->exit_behavior = XRemoteAppExitPress;
     settings->repeat_count = 2;
     settings->alt_names = 1;
+    settings->default_file = furi_string_alloc_set_str("AppleTV.ir");
+
+    // Add IR files list initialization
+    settings->ir_files = xremote_app_ir_files_alloc();
+    xremote_app_ir_files_scan(settings->ir_files);
+
     return settings;
 }
 
+// MODIFY the existing xremote_app_settings_free function:
 void xremote_app_settings_free(XRemoteAppSettings* settings) {
     xremote_app_assert_void(settings);
+    
+    // Add cleanup for IR files list
+    if(settings->ir_files) {
+        xremote_app_ir_files_free(settings->ir_files);
+    }
+    
+    if(settings->default_file) {
+        furi_string_free(settings->default_file);
+    }
+    
     free(settings);
 }
 
@@ -287,6 +409,8 @@ bool xremote_app_settings_store(XRemoteAppSettings* settings) {
 
         value = settings->alt_names;
         if(!flipper_format_write_uint32(ff, "altNames", &value, 1)) break;
+
+        if(!flipper_format_write_string(ff, "defaultFile", settings->default_file)) break;
 
         success = true;
     } while(false);
@@ -325,6 +449,11 @@ bool xremote_app_settings_load(XRemoteAppSettings* settings) {
 
         if(!flipper_format_read_uint32(ff, "altNames", &value, 1)) break;
         settings->alt_names = value;
+
+        if(!flipper_format_read_string(ff, "defaultFile", settings->default_file)) {
+            // Handle error - set default value
+            furi_string_set_str(settings->default_file, "default.ir");
+        }
 
         success = true;
     } while(false);
@@ -380,6 +509,20 @@ void xremote_app_context_free(XRemoteAppContext* ctx) {
     }
 
     free(ctx);
+}
+
+void xremote_app_ir_files_free(XRemoteIRFileList* list) {
+    if(!list) return;
+    
+    if(list->file_names) {
+        for(uint32_t i = 0; i < list->count; i++) {
+            if(list->file_names[i]) {
+                free(list->file_names[i]);
+            }
+        }
+        free(list->file_names);
+    }
+    free(list);
 }
 
 bool xremote_app_browser_select_file(FuriString** file_path, const char* extension) {
